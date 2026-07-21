@@ -6,6 +6,21 @@ Schema includes columns for Stage 1/2 AI results and a listing_feedback
 table up front, even though the Jetson filtering and Discord feedback
 buttons aren't built yet. Adding columns to a live table later is
 annoying; adding them now costs nothing.
+
+Note the distinction between first_seen_at and listing_created_at:
+first_seen_at is when *we* first saw the listing (always known, set on
+insert). listing_created_at is when the seller actually posted it on
+Marketplace - only available from the full-listing endpoint, so it
+stays NULL until Stage 2 fills it in. Once populated, listing_created_at
+is what you'd bucket into a histogram to see when relevant listings
+tend to get posted; first_seen_at - listing_created_at tells you how
+long it took your polling schedule to catch a given listing.
+
+_ensure_column() below is a lightweight migration helper: since
+CREATE TABLE IF NOT EXISTS only handles brand-new databases, any new
+column added to SCHEMA after a database already exists (like this one)
+also needs a line here so existing databases on the Pi pick it up
+without having to be deleted and recreated.
 """
 import os
 import sqlite3
@@ -35,6 +50,7 @@ CREATE TABLE IF NOT EXISTS listings (
     notified_at TIMESTAMP,
     first_seen_at TIMESTAMP,
     last_seen_at TIMESTAMP,
+    listing_created_at TIMESTAMP,
     raw_search_json TEXT
 );
 
@@ -68,10 +84,24 @@ def get_connection(db_path: str):
         conn.close()
 
 
+def _ensure_column(conn, table: str, column: str, coltype: str):
+    """Adds `column` to `table` if it doesn't already exist. Safe to
+    call repeatedly - checks PRAGMA table_info first. Use this for any
+    schema change made to a table after it may already exist on some
+    machine (i.e. basically every change from now on)."""
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
 def init_db(db_path: str):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     with get_connection(db_path) as conn:
         conn.executescript(SCHEMA)
+        # Migrations for columns added after a database may already
+        # exist. Add a line here (not just in SCHEMA above) whenever a
+        # new column is introduced.
+        _ensure_column(conn, "listings", "listing_created_at", "TIMESTAMP")
 
 
 def listing_exists(conn, listing_id: str) -> bool:
@@ -120,6 +150,16 @@ def mark_notified(conn, listing_id: str):
     conn.execute(
         "UPDATE listings SET notified_at = ? WHERE id = ?",
         (datetime.now(timezone.utc).isoformat(), listing_id),
+    )
+
+
+def update_listing_created_at(conn, listing_id: str, created_at: datetime):
+    """Records when the listing was actually posted on Marketplace, per
+    the full-listing endpoint. Not available from search results, so
+    this only gets called once Stage 2 fetches listing details."""
+    conn.execute(
+        "UPDATE listings SET listing_created_at = ? WHERE id = ?",
+        (created_at.isoformat(), listing_id),
     )
 
 
