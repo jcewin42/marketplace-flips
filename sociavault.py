@@ -34,10 +34,14 @@ def search_marketplace(query: str, latitude: float, longitude: float, radius: in
     regularly, you're likely missing listings past the first page.
     """
     url = f"{BASE_URL}/v1/scrape/facebook-marketplace/search"
+    # NOTE: the blog docs (linked above) show "latitude"/"longitude" as
+    # the param names, but the live API actually rejects that with
+    # "lat is required and must be a number" - the docs are wrong here,
+    # trusting the API's own error message instead.
     params = {
         "query": query,
-        "latitude": latitude,
-        "longitude": longitude,
+        "lat": latitude,
+        "lng": longitude,
         "radius_km": radius,
         "sort_by": "creation_time_descend",
     }
