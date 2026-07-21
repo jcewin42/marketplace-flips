@@ -1,0 +1,16 @@
+[Unit]
+Description=Marketplace flip monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User and paths to match your Pi setup
+User=pi
+WorkingDirectory=/home/pi/marketplace-flips
+ExecStart=/home/pi/marketplace-flips/venv/bin/python monitor.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
