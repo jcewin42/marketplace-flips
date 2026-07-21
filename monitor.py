@@ -6,6 +6,7 @@ change.
 """
 import json
 import logging
+import sys
 import time
 from datetime import datetime
 
@@ -86,6 +87,13 @@ def run():
     cfg = config.load_active_config()
     logger.info("Starting monitor for search '%s'", cfg.name)
     db.init_db(cfg.database_path)
+
+    if "--once" in sys.argv:
+        logger.info("--once passed: running a single check and exiting")
+        with db.get_connection(cfg.database_path) as conn:
+            check_for_new_listings(cfg, conn)
+            db.set_last_check(conn, datetime.now(EASTERN))
+        return
 
     with db.get_connection(cfg.database_path) as conn:
         last_check = db.get_last_check(conn)
