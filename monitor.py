@@ -21,6 +21,17 @@ from schedule import EASTERN, seconds_until_next_check
 logger = logging.getLogger(__name__)
 
 
+def parse_listed_at(value: str):
+    """Parses the listed_at timestamp SociaVault sometimes includes on
+    search results (e.g. '2026-05-15T14:22:00Z'). Returns None on any
+    parse failure rather than raising - this is a nice-to-have field,
+    not worth crashing a check over."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
 def check_for_new_listings(cfg, conn):
     logger.info("Checking for new listings (query=%r)", cfg.query)
     raw_results = sociavault.search_marketplace(
@@ -55,6 +66,13 @@ def check_for_new_listings(cfg, conn):
             listing.get("title"), listing.get("price_formatted"), listing.get("url"),
         )
         db.insert_listing(conn, listing, raw_json=json.dumps(raw))
+
+        if listing.get("listed_at"):
+            created_at = parse_listed_at(listing["listed_at"])
+            if created_at:
+                db.update_listing_created_at(conn, listing["id"], created_at)
+            else:
+                logger.warning("Could not parse listed_at %r for %r", listing["listed_at"], listing.get("title"))
 
         stage1_result = ai_filter.filter_stage1(listing)
         logger.info(

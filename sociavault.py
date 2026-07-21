@@ -1,11 +1,17 @@
 """Thin wrapper around the SociaVault Marketplace API.
 
-NOTE: I don't have your actual SociaVault endpoint paths/auth scheme in
-front of me, so BASE_URL and the two paths below are placeholders -
-swap them for what's in your SociaVault account docs/dashboard before
-running this on the Pi. Everything downstream (normalize_listing) is
-written against the flat dict shape, so once the request/response
-plumbing is correct here, nothing else needs to change.
+Per https://sociavault.com/blog/facebook-marketplace-scraper-api :
+all endpoints take the API key in an `x-api-key` header, and there are
+three endpoints - we only use two of them (we already have fixed
+lat/lon per search config, so location-search isn't needed):
+
+  search: /v1/scrape/facebook-marketplace/search
+    params: query, latitude, longitude, radius_km (+ optional
+    price_min/price_max/cursor). Returns {listings, cursor, total_count}.
+    Up to 24 listings per page - see NOTE on pagination below.
+
+  item: /v1/scrape/facebook-marketplace/item
+    params: id. Returns full details including description.
 """
 import logging
 
@@ -19,14 +25,27 @@ BASE_URL = "https://api.sociavault.com"
 
 
 def search_marketplace(query: str, latitude: float, longitude: float, radius: int) -> list:
-    """Cheap search endpoint. Returns a list of raw listing dicts."""
+    """Cheap search endpoint. Returns a list of raw listing dicts.
+
+    NOTE on pagination: the docs say this returns up to 24 listings per
+    page with a `cursor` for the next page. We're only fetching page 1
+    right now - fine for a niche query like "outboard motor" in a
+    single metro area, but if you ever see close to 24 results
+    regularly, you're likely missing listings past the first page.
+    """
     url = f"{BASE_URL}/v1/scrape/facebook-marketplace/search"
-    params={"query": query, "lat": latitude, "lng": longitude, "radius_km": radius, "sort_by": "creation_time_descend"},
+    params = {
+        "query": query,
+        "latitude": latitude,
+        "longitude": longitude,
+        "radius_km": radius,
+        "sort_by": "creation_time_descend",
+    }
     logger.debug("GET %s params=%s", url, params)
 
     response = requests.get(
         url,
-        headers={"X-API-Key": SOCIAVAULT_API_KEY},
+        headers={"x-api-key": SOCIAVAULT_API_KEY},
         params=params,
         timeout=15,
     )
@@ -39,20 +58,25 @@ def search_marketplace(query: str, latitude: float, longitude: float, radius: in
         )
         raise
 
-    results = response.json().get("results", [])
-    logger.debug("SociaVault search returned %d results", len(results))
+    data = response.json()
+    results = data.get("listings", [])
+    logger.debug(
+        "SociaVault search returned %d results (total_count=%s, cursor=%s)",
+        len(results), data.get("total_count"), data.get("cursor"),
+    )
     return results
 
 
 def get_listing_details(listing_id: str) -> dict:
     """More expensive full-listing endpoint (includes description).
     Only call this for listings that passed Stage 1 filtering."""
-    url = f"{BASE_URL}/marketplace/listing/{listing_id}"  # TODO: confirm real path
-    logger.debug("GET %s", url)
+    url = f"{BASE_URL}/v1/scrape/facebook-marketplace/item"
+    logger.debug("GET %s id=%s", url, listing_id)
 
     response = requests.get(
         url,
-        headers={"Authorization": f"Bearer {SOCIAVAULT_API_KEY}"},
+        headers={"x-api-key": SOCIAVAULT_API_KEY},
+        params={"id": listing_id},
         timeout=15,
     )
     try:
@@ -85,4 +109,9 @@ def normalize_listing(raw: dict) -> dict:
         "category": raw.get("category"),
         "is_live": raw.get("is_live"),
         "is_sold": raw.get("is_sold"),
+        # Opportunistic - present in the docs' example search response,
+        # though earlier testing found it null. Capture it for free
+        # when it's there; Stage 2's item lookup remains the reliable
+        # fallback for the listing_created_at histogram.
+        "listed_at": raw.get("listed_at"),
     }
