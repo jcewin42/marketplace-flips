@@ -64,10 +64,16 @@ def search_marketplace(query: str, latitude: float, longitude: float, radius: in
 
     data = response.json()
     results = data.get("listings", [])
-    logger.debug(
+    logger.info(
         "SociaVault search returned %d results (total_count=%s, cursor=%s)",
         len(results), data.get("total_count"), data.get("cursor"),
     )
+    if not results and data.get("total_count"):
+        logger.warning(
+            "total_count=%s but 0 listings parsed - response shape may not match "
+            "what normalize_listing expects. Raw keys: %s",
+            data.get("total_count"), list(data.keys()),
+        )
     return results
 
 
