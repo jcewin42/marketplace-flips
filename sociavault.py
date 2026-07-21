@@ -68,12 +68,11 @@ def search_marketplace(query: str, latitude: float, longitude: float, radius: in
         "SociaVault search returned %d results (total_count=%s, cursor=%s)",
         len(results), data.get("total_count"), data.get("cursor"),
     )
-    if not results and data.get("total_count"):
-        logger.warning(
-            "total_count=%s but 0 listings parsed - response shape may not match "
-            "what normalize_listing expects. Raw keys: %s",
-            data.get("total_count"), list(data.keys()),
-        )
+    if "listings" not in data and "total_count" not in data:
+        # Response doesn't match the shape we expect at all - dump the
+        # raw body so we can see what SociaVault is actually sending.
+        logger.warning("Unexpected response shape - raw keys: %s", list(data.keys()))
+        logger.warning("Raw response body: %s", response.text[:1500])
     return results
 
 
