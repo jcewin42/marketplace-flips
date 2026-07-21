@@ -10,18 +10,21 @@ you build that, this module will need to become a bot client instead
 of a webhook poster. Not needed yet, just flagging it now so it's not
 a surprise later.
 """
+import logging
 import time
 
 import requests
 
 from config import DISCORD_WEBHOOK_URL
 
+logger = logging.getLogger(__name__)
+
 DELAY_BETWEEN_MESSAGES_SECONDS = 2
 
 
 def send_notification(listing: dict, ai_result: dict):
     if not DISCORD_WEBHOOK_URL:
-        print("DISCORD_WEBHOOK_URL not set - skipping notification")
+        logger.warning("DISCORD_WEBHOOK_URL not set - skipping notification for %r", listing.get("title"))
         return
 
     embed = {
@@ -46,7 +49,16 @@ def send_notification(listing: dict, ai_result: dict):
 
     if response.status_code == 429:
         retry_after = response.json().get("retry_after", 5)
+        logger.warning("Discord rate limited - retrying after %.1fs", retry_after)
         time.sleep(retry_after)
-        requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+
+    if response.status_code >= 400:
+        logger.error(
+            "Discord notification failed for %r: HTTP %d - %s",
+            listing.get("title"), response.status_code, response.text[:500],
+        )
+    else:
+        logger.debug("Discord notification sent for %r", listing.get("title"))
 
     time.sleep(DELAY_BETWEEN_MESSAGES_SECONDS)
