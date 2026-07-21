@@ -8,7 +8,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import ai_filter
 import config
@@ -140,6 +140,13 @@ def run():
             # Persist even on failure - a failing API shouldn't cause
             # tight retry loops that ignore the schedule.
             db.set_last_check(conn, last_check)
+
+        next_check_in = seconds_until_next_check(last_check)
+        next_check_at = datetime.now(EASTERN) + timedelta(seconds=next_check_in)
+        logger.info(
+            "Next check at approximately %s (in %.0f min)",
+            next_check_at.strftime("%Y-%m-%d %H:%M:%S %Z"), next_check_in / 60,
+        )
 
 
 if __name__ == "__main__":

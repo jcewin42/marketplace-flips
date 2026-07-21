@@ -11,7 +11,8 @@ CONFIG = SearchConfig(
     radius=50,
     database_path="databases/outboard_motors.db",
     negative_keywords=[
-        "toy", 
-        "civic"
+        "toy",
+        "model",
+        "civic",
     ],
 )
