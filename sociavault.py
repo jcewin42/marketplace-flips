@@ -1,17 +1,37 @@
 """Thin wrapper around the SociaVault Marketplace API.
 
-Per https://sociavault.com/blog/facebook-marketplace-scraper-api :
-all endpoints take the API key in an `x-api-key` header, and there are
-three endpoints - we only use two of them (we already have fixed
-lat/lon per search config, so location-search isn't needed):
+Real (observed) response shape for the search endpoint - this does NOT
+match SociaVault's own blog docs, which is why several fields below
+are named for what the API actually sends rather than what's
+documented:
 
-  search: /v1/scrape/facebook-marketplace/search
-    params: query, latitude, longitude, radius_km (+ optional
-    price_min/price_max/cursor). Returns {listings, cursor, total_count}.
-    Up to 24 listings per page - see NOTE on pagination below.
+    {
+      "success": true,
+      "data": {
+        "success": true,
+        "listings": {
+          "0": { "id": ..., "title": ..., "creation_time": null, ... },
+          "1": { ... }
+        }
+      },
+      "credits_used": 3
+    }
 
-  item: /v1/scrape/facebook-marketplace/item
-    params: id. Returns full details including description.
+Notable surprises vs. the docs:
+  - Double-wrapped: listings live at data.listings, not top-level.
+  - listings is a dict keyed by stringified index ("0", "1", ...), not
+    a JSON array.
+  - creation_time is a real field (confirms it exists but is null in
+    practice, as observed in testing before this file existed).
+  - category comes back as category_id (a numeric id), not a text
+    category label.
+  - credits_used is present at the top level - worth logging every
+    call, since it's the most direct signal of actual API cost.
+
+The item endpoint likely has a similar envelope (unconfirmed - we
+haven't wired it up yet). When you build Stage 2, check
+get_listing_details's raw response the same way this file's dev
+history did, rather than assuming it matches the blog docs.
 """
 import logging
 
@@ -27,17 +47,11 @@ BASE_URL = "https://api.sociavault.com"
 def search_marketplace(query: str, latitude: float, longitude: float, radius: int) -> list:
     """Cheap search endpoint. Returns a list of raw listing dicts.
 
-    NOTE on pagination: the docs say this returns up to 24 listings per
-    page with a `cursor` for the next page. We're only fetching page 1
-    right now - fine for a niche query like "outboard motor" in a
-    single metro area, but if you ever see close to 24 results
-    regularly, you're likely missing listings past the first page.
+    NOTE on pagination: unconfirmed for this endpoint's real shape -
+    the docs mention a cursor but we haven't seen one in a real
+    response yet. Revisit if searches start looking capped.
     """
     url = f"{BASE_URL}/v1/scrape/facebook-marketplace/search"
-    # NOTE: the blog docs (linked above) show "latitude"/"longitude" as
-    # the param names, but the live API actually rejects that with
-    # "lat is required and must be a number" - the docs are wrong here,
-    # trusting the API's own error message instead.
     params = {
         "query": query,
         "lat": latitude,
@@ -62,23 +76,35 @@ def search_marketplace(query: str, latitude: float, longitude: float, radius: in
         )
         raise
 
-    data = response.json()
-    results = data.get("listings", [])
+    payload = response.json()
+    inner = payload.get("data") or {}
+    listings_obj = inner.get("listings") or {}
+    # listings comes back as a dict keyed by stringified index, not a
+    # JSON array - values() gives us a normal list, and json parsing
+    # preserves insertion order so this stays in the original order.
+    results = list(listings_obj.values()) if isinstance(listings_obj, dict) else list(listings_obj)
+
     logger.info(
-        "SociaVault search returned %d results (total_count=%s, cursor=%s)",
-        len(results), data.get("total_count"), data.get("cursor"),
+        "SociaVault search returned %d results (credits_used=%s)",
+        len(results), payload.get("credits_used"),
     )
-    if "listings" not in data and "total_count" not in data:
-        # Response doesn't match the shape we expect at all - dump the
-        # raw body so we can see what SociaVault is actually sending.
-        logger.warning("Unexpected response shape - raw keys: %s", list(data.keys()))
-        logger.warning("Raw response body: %s", response.text[:1500])
+    if not results and "listings" not in inner:
+        logger.warning(
+            "Unexpected response shape - top-level keys: %s, data keys: %s",
+            list(payload.keys()), list(inner.keys()),
+        )
     return results
 
 
 def get_listing_details(listing_id: str) -> dict:
     """More expensive full-listing endpoint (includes description).
-    Only call this for listings that passed Stage 1 filtering."""
+    Only call this for listings that passed Stage 1 filtering.
+
+    UNCONFIRMED: haven't actually hit this endpoint yet, so the same
+    double-wrapping search had ("data" envelope) may well apply here
+    too. Check the raw response the first time you call this for real
+    rather than assuming this return shape is right.
+    """
     url = f"{BASE_URL}/v1/scrape/facebook-marketplace/item"
     logger.debug("GET %s id=%s", url, listing_id)
 
@@ -97,7 +123,8 @@ def get_listing_details(listing_id: str) -> dict:
         )
         raise
 
-    return response.json()
+    payload = response.json()
+    return payload.get("data", payload)
 
 
 def normalize_listing(raw: dict) -> dict:
@@ -115,12 +142,10 @@ def normalize_listing(raw: dict) -> dict:
         "location_city": location.get("city"),
         "location_state": location.get("state"),
         "primary_photo_url": photo.get("url"),
-        "category": raw.get("category"),
+        "category": raw.get("category_id"),
         "is_live": raw.get("is_live"),
         "is_sold": raw.get("is_sold"),
-        # Opportunistic - present in the docs' example search response,
-        # though earlier testing found it null. Capture it for free
-        # when it's there; Stage 2's item lookup remains the reliable
-        # fallback for the listing_created_at histogram.
-        "listed_at": raw.get("listed_at"),
+        # Real field is creation_time (confirmed present, null in
+        # practice so far) - not "listed_at" as the blog docs implied.
+        "listed_at": raw.get("creation_time"),
     }
