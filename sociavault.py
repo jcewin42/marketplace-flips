@@ -1,25 +1,18 @@
 """Thin wrapper around the SociaVault Marketplace API.
-
-NOTE: I don't have your actual SociaVault endpoint paths/auth scheme in
-front of me, so BASE_URL and the two paths below are placeholders -
-swap them for what's in your SociaVault account docs/dashboard before
-running this on the Pi. Everything downstream (normalize_listing) is
-written against the flat dict shape, so once the request/response
-plumbing is correct here, nothing else needs to change.
 """
 import requests
 
 from config import SOCIAVAULT_API_KEY
 
-BASE_URL = "https://api.sociavault.com"  # TODO: confirm real base URL
+BASE_URL = "https://api.sociavault.com"
 
 
 def search_marketplace(query: str, latitude: float, longitude: float, radius: int) -> list:
     """Cheap search endpoint. Returns a list of raw listing dicts."""
     response = requests.get(
-        f"{BASE_URL}/marketplace/search",  # TODO: confirm real path
-        headers={"Authorization": f"Bearer {SOCIAVAULT_API_KEY}"},
-        params={"query": query, "latitude": latitude, "longitude": longitude, "radius": radius},
+        f"{BASE_URL}/v1/scrape/facebook-marketplace/search", 
+        headers={"X-API-Key": SOCIAVAULT_API_KEY},
+        params={"query": query, "lat": latitude, "lng": longitude, "radius_km": radius, "sort_by": "creation_time_descend"},
         timeout=15,
     )
     response.raise_for_status()
