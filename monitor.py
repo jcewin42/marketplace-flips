@@ -55,7 +55,13 @@ def run():
     db.init_db(cfg.database_path)
     print(f"Monitoring '{cfg.name}' -> {cfg.database_path}")
 
-    last_check = datetime.min.replace(tzinfo=EASTERN)
+    with db.get_connection(cfg.database_path) as conn:
+        last_check = db.get_last_check(conn)
+    if last_check is None:
+        # First time this database has ever run - fine to check
+        # immediately rather than waiting a full interval.
+        last_check = datetime.min.replace(tzinfo=EASTERN)
+    print(f"Last check was: {last_check}")
 
     while True:
         wait_seconds = seconds_until_next_check(last_check)
@@ -69,6 +75,9 @@ def run():
                 check_for_new_listings(cfg, conn)
             except Exception as exc:
                 print(f"Error during check: {exc}")
+            # Persist even on failure - a failing API shouldn't cause
+            # tight retry loops that ignore the schedule.
+            db.set_last_check(conn, last_check)
 
 
 if __name__ == "__main__":

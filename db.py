@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS listing_feedback (
     feedback_reason TEXT,
     created_at TIMESTAMP
 );
+
+-- Small key/value table for monitor state that needs to survive
+-- restarts (currently just last_check_at, but generic in case other
+-- persisted state comes up later).
+CREATE TABLE IF NOT EXISTS monitor_state (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -112,4 +120,21 @@ def mark_notified(conn, listing_id: str):
     conn.execute(
         "UPDATE listings SET notified_at = ? WHERE id = ?",
         (datetime.now(timezone.utc).isoformat(), listing_id),
+    )
+
+
+def get_last_check(conn):
+    """Returns the last check time as a UTC-aware datetime, or None if
+    the monitor has never run against this database before."""
+    row = conn.execute("SELECT value FROM monitor_state WHERE key = 'last_check_at'").fetchone()
+    if row is None:
+        return None
+    return datetime.fromisoformat(row["value"])
+
+
+def set_last_check(conn, when: datetime):
+    conn.execute(
+        "INSERT INTO monitor_state (key, value) VALUES ('last_check_at', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (when.isoformat(),),
     )
